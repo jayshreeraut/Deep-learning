@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webcam Object Detection</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        h1 {
+            color: white;
+            margin: 20px 0;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 900px;
+            width: 100%;
+        }
+        
+        .video-container {
+            position: relative;
+            width: 100%;
+            max-width: 640px;
+            margin: 0 auto;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        #webcam {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            padding: 12px 30px;
+            font-size: 16px;
+            font-weight: bold;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+        
+        #startBtn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        #startBtn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        #stopBtn {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+        
+        #stopBtn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(245, 87, 108, 0.4);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+        
+        #status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            font-weight: bold;
+            background: #f0f0f0;
+        }
+        
+        #status.loading {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        #status.ready {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        #status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .info {
+            margin-top: 20px;
+            padding: 15px;
+            background: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            border-radius: 5px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .detected-objects {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            min-height: 50px;
+        }
+        
+        .detected-objects h3 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .object-tag {
+            display: inline-block;
+            padding: 5px 15px;
+            margin: 5px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 20px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎥 Webcam Object Detection</h1>
+    
+    <div class="container">
+        <div class="video-container">
+            <video id="webcam" autoplay playsinline></video>
+            <canvas id="canvas"></canvas>
+        </div>
+        
+        <div class="controls">
+            <button id="startBtn">Click to open Camera</button>
+            <button id="stopBtn" disabled>Camera Band Karein</button>
+        </div>
+        
+        <div id="status" class="loading">Model loading...</div>
+        
+        <div class="detected-objects">
+            <h3>Detected Objects:</h3>
+            <div id="objectList">No object detected</div>
+        </div>
+        
+        <div class="info">
+            <strong>ℹ️ How to use:</strong><br>
+            • "First open your Camera<br>
+            • Allow camera permission<br>
+            • Model will detect object automatically<br>
+            • COCO-SSD is using (can detec 80+ objects )
+        </div>
+    </div>
+
+    <script>
+        let model;
+        let webcam = document.getElementById('webcam');
+        let canvas = document.getElementById('canvas');
+        let ctx = canvas.getContext('2d');
+        let startBtn = document.getElementById('startBtn');
+        let stopBtn = document.getElementById('stopBtn');
+        let status = document.getElementById('status');
+        let objectList = document.getElementById('objectList');
+        let isDetecting = false;
+        let stream = null;
+
+        // Model load karein
+        async function loadModel() {
+            try {
+                status.textContent = 'Model load ho raha hai...';
+                status.className = 'loading';
+                model = await cocoSsd.load();
+                status.textContent = 'Model ready hai! Camera shuru karein.';
+                status.className = 'ready';
+                startBtn.disabled = false;
+            } catch (error) {
+                status.textContent = 'Error: Model load nahi hua - ' + error.message;
+                status.className = 'error';
+            }
+        }
+
+        // Webcam shuru karein
+        async function startWebcam() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 640, height: 480 } 
+                });
+                webcam.srcObject = stream;
+                
+                webcam.addEventListener('loadeddata', () => {
+                    canvas.width = webcam.videoWidth;
+                    canvas.height = webcam.videoHeight;
+                    isDetecting = true;
+                    startBtn.disabled = true;
+                    stopBtn.disabled = false;
+                    status.textContent = 'Detection chal raha hai...';
+                    status.className = 'ready';
+                    detectObjects();
+                });
+            } catch (error) {
+                status.textContent = 'Error: Camera access nahi mila - ' + error.message;
+                status.className = 'error';
+            }
+        }
+
+        // Webcam band karein
+        function stopWebcam() {
+            isDetecting = false;
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            webcam.srcObject = null;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            status.textContent = 'Camera band hai. Dobara shuru karne ke liye button dabayein.';
+            status.className = '';
+            objectList.textContent = 'Koi object detect nahi hua';
+        }
+
+        // Objects detect karein
+        async function detectObjects() {
+            if (!isDetecting) return;
+
+            const predictions = await model.detect(webcam);
+            
+            // Canvas clear karein
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Detected objects ki list
+            let detectedItems = new Set();
+            
+            // Har prediction ke liye
+            predictions.forEach(prediction => {
+                const [x, y, width, height] = prediction.bbox;
+                const confidence = (prediction.score * 100).toFixed(1);
+                
+                // Box draw karein
+                ctx.strokeStyle = '#00ff00';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(x, y, width, height);
+                
+                // Label background
+                ctx.fillStyle = '#00ff00';
+                const text = `${prediction.class} (${confidence}%)`;
+                const textWidth = ctx.measureText(text).width;
+                ctx.fillRect(x, y - 25, textWidth + 10, 25);
+                
+                // Label text
+                ctx.fillStyle = '#000000';
+                ctx.font = 'bold 16px Arial';
+                ctx.fillText(text, x + 5, y - 7);
+                
+                // List mein add karein
+                detectedItems.add(prediction.class);
+            });
+            
+            // Update object list
+            if (detectedItems.size > 0) {
+                objectList.innerHTML = Array.from(detectedItems)
+                    .map(item => `<span class="object-tag">${item}</span>`)
+                    .join('');
+            } else {
+                objectList.textContent = 'Koi object detect nahi hua';
+            }
+            
+            // Next frame
+            requestAnimationFrame(detectObjects);
+        }
+
+        // Event listeners
+        startBtn.addEventListener('click', startWebcam);
+        stopBtn.addEventListener('click', stopWebcam);
+
+        // Model load karein jab page load ho
+        startBtn.disabled = true;
+        loadModel();
+    </script>
+</body>
+</html>
